@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smooth Conway's Game of Life</title>
+    <style>
+        /* CSS remains largely the same as the previous version */
+        @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap');
+
+        :root {
+            --bg-color: #0f0f1a;
+            --accent-color: #00f7d3;
+            /* Cell color variations can be handled dynamically in JS if needed */
+            --grid-color: rgba(30, 30, 45, 0.8);
+            --ui-bg: rgba(30, 30, 45, 0.7);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            margin: 0; padding: 0; overflow: hidden;
+            background-color: var(--bg-color);
+            font-family: 'Space Mono', monospace; color: var(--accent-color);
+            height: 100vh; width: 100vw;
+            display: flex; justify-content: center; align-items: center;
+        }
+
+        canvas {
+            position: absolute; top: 0; left: 0;
+            width: 100%; height: 100%; display: block;
+        }
+
+        .ui-container {
+            position: fixed; bottom: 20px; left: 50%;
+            transform: translateX(-50%); z-index: 10;
+            display: flex; flex-direction: column; align-items: center; gap: 15px;
+            backdrop-filter: blur(5px); background: var(--ui-bg);
+            padding: 15px 25px; border-radius: 12px;
+            border: 1px solid rgba(0, 247, 211, 0.2);
+            box-shadow: 0 0 20px rgba(0, 247, 211, 0.15);
+            transition: opacity 0.3s ease, transform 0.3s ease; /* Added transform */
+        }
+        .ui-container:hover {
+            border-color: rgba(0, 247, 211, 0.4);
+            box-shadow: 0 0 30px rgba(0, 247, 211, 0.25);
+        }
+
+        .title { font-size: 18px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 5px; text-shadow: 0 0 8px rgba(0, 247, 211, 0.5); }
+        .controls { display: flex; gap: 10px; }
+        button {
+            padding: 8px 16px; font-family: 'Space Mono', monospace; font-size: 14px;
+            background-color: rgba(0, 247, 211, 0.15); color: var(--accent-color);
+            border: 1px solid rgba(0, 247, 211, 0.3); border-radius: 6px;
+            cursor: pointer; transition: all 0.2s ease;
+            text-transform: uppercase; letter-spacing: 1px;
+        }
+        button:hover { background-color: rgba(0, 247, 211, 0.25); border-color: rgba(0, 247, 211, 0.5); box-shadow: 0 0 10px rgba(0, 247, 211, 0.3); }
+        button:active { transform: scale(0.95); }
+        .footer { font-size: 12px; opacity: 0.7; text-align: center; }
+
+        .stats {
+             font-size: 12px; position: fixed; top: 20px; right: 20px;
+             background: var(--ui-bg); padding: 10px 15px; border-radius: 8px;
+             border: 1px solid rgba(0, 247, 211, 0.2); z-index: 10;
+             transition: opacity 0.3s ease;
+        }
+        .patterns { display: flex; gap: 8px; margin-top: 5px; }
+
+        .hide-ui {
+            position: fixed; top: 20px; left: 20px; z-index: 10;
+            padding: 5px 10px; opacity: 0.7; font-size: 12px;
+        }
+
+        .hidden {
+            opacity: 0 !important;
+            transform: translateX(-50%) translateY(20px) !important; /* Slide down effect for main UI */
+            pointer-events: none !important;
+        }
+         .stats.hidden { /* Different hide animation for stats */
+             opacity: 0 !important;
+             transform: translateY(-10px) !important;
+             pointer-events: none !important;
+         }
+
+
+        .speed-control { display: flex; align-items: center; gap: 8px; margin-top: 5px; }
+        input[type="range"] {
+            -webkit-appearance: none; width: 100px; height: 4px;
+            background: rgba(0, 247, 211, 0.2); border-radius: 2px; outline: none; cursor: pointer;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 12px; height: 12px;
+            background: var(--accent-color); border-radius: 50%; cursor: pointer;
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 12px; height: 12px; background: var(--accent-color);
+            border-radius: 50%; cursor: pointer; border: none;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <button id="hideUIBtn" class="hide-ui">Hide UI</button>
+
+    <div class="ui-container" id="uiContainer">
+        <div class="title">Conway's Game of Life</div>
+        <div class="controls">
+            <button id="playPauseBtn">Pause</button>
+            <button id="clearBtn">Clear</button>
+            <button id="randomBtn">Random</button>
+        </div>
+        <div class="patterns">
+            <button id="gliderBtn">Glider</button>
+            <button id="pulsarBtn">Pulsar</button>
+        </div>
+        <div class="speed-control">
+            <span>Speed:</span>
+            <input type="range" id="speedSlider" min="1" max="10" value="5">
+        </div>
+        <div class="footer">Click/Drag to toggle cells</div>
+    </div>
+
+    <div class="stats" id="statsPanel">
+        Generation: <span id="genCount">0</span><br>
+        Population: <span id="popCount">0</span>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- DOM Elements ---
+            const uiContainer = document.getElementById('uiContainer');
+            const hideUIBtn = document.getElementById('hideUIBtn');
+            const statsPanel = document.getElementById('statsPanel');
+            const genCountEl = document.getElementById('genCount');
+            const popCountEl = document.getElementById('popCount');
+            const speedSlider = document.getElementById('speedSlider');
+            const playPauseBtn = document.getElementById('playPauseBtn');
+            const clearBtn = document.getElementById('clearBtn');
+            const randomBtn = document.getElementById('randomBtn');
+            const gliderBtn = document.getElementById('gliderBtn');
+            const pulsarBtn = document.getElementById('pulsarBtn');
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+
+            // --- Constants & State Variables ---
+            const GRID_COLOR_STYLE = getComputedStyle(document.documentElement).getPropertyValue('--grid-color').trim();
+            const BG_COLOR_STYLE = getComputedStyle(document.documentElement).getPropertyValue('--bg-color').trim();
+            const ACCENT_COLOR = getComputedStyle(document.documentElement).getPropertyValue('--accent-color').trim();
+            const GLOW_COLOR = `rgba(${hexToRgb(ACCENT_COLOR)}, 0.6)`; // Slightly softer glow
+            const CELL_COLOR = `rgba(${hexToRgb(ACCENT_COLOR)}, 0.9)`; // Base cell color
+
+            const ANIMATION_DURATION = 300; // Milliseconds for fade/size transition
+
+            let CELL_SIZE = 12;
+            let GRID_WIDTH;
+            let GRID_HEIGHT;
+            let grid = []; // Will store objects: { state: 0|1, animationValue: 0-1 }
+            let isRunning = false; // Start paused until initialized
+            let animationFrameId = null; // For the animation loop
+            let simulationTimer = null; // For the simulation interval
+            let lastFrameTimestamp = 0;
+            let speed = 100; // Simulation update interval in ms
+            let generation = 0;
+            let population = 0;
+            let uiVisible = true;
+            let needsRedraw = true; // Flag to redraw only when necessary
+
+            // Drag drawing state
+            let isDrawing = false;
+            let drawMode = null;
+
+            // --- Helper Functions ---
+            function hexToRgb(hex) {
+                let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+                return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '0, 0, 0';
+            }
+
+            // Easing function (easeOutCubic)
+            function easeOutCubic(t) { // t ranges from 0 to 1
+                return (--t) * t * t + 1;
+            }
+
+            function createCell(state = 0, value = 0) {
+                 return {
+                     state: state, // The logical state (0 or 1)
+                     animationValue: value // The visual intensity (0 to 1)
+                 };
+            }
+
+            function createEmptyGrid() {
+                if (typeof GRID_WIDTH !== 'number' || typeof GRID_HEIGHT !== 'number' || GRID_WIDTH <= 0 || GRID_HEIGHT <= 0) {
+                    console.error("Invalid grid dimensions for creation:", GRID_WIDTH, GRID_HEIGHT);
+                    return [];
+                }
+                return Array(GRID_HEIGHT).fill(null).map(() => Array(GRID_WIDTH).fill(null).map(() => createCell()));
+            }
+
+            // --- Core Logic Functions ---
+            function resizeCanvas() {
+                const oldGrid = grid;
+                const oldWidth = GRID_WIDTH;
+                const oldHeight = GRID_HEIGHT;
+
+                canvas.width = window.innerWidth;
+                canvas.height = window.innerHeight;
+                CELL_SIZE = Math.max(5, Math.min(16, Math.floor(window.innerWidth / 120)));
+                GRID_WIDTH = Math.ceil(canvas.width / CELL_SIZE);
+                GRID_HEIGHT = Math.ceil(canvas.height / CELL_SIZE);
+
+                grid = createEmptyGrid();
+                if (grid.length === 0) return;
+
+                // Copy old pattern (maintaining animation state)
+                if (oldGrid && oldGrid.length > 0 && oldGrid[0]?.length > 0 && (oldWidth !== GRID_WIDTH || oldHeight !== GRID_HEIGHT)) {
+                    const offsetX = Math.floor((GRID_WIDTH - oldWidth) / 2);
+                    const offsetY = Math.floor((GRID_HEIGHT - oldHeight) / 2);
+
+                    for (let y = 0; y < oldHeight; y++) {
+                        for (let x = 0; x < oldWidth; x++) {
+                            if (oldGrid[y]?.[x]) {
+                                const newX = x + offsetX;
+                                const newY = y + offsetY;
+                                if (newX >= 0 && newX < GRID_WIDTH && newY >= 0 && newY < GRID_HEIGHT) {
+                                    grid[newY][newX] = oldGrid[y][x]; // Copy the cell object
+                                }
+                            }
+                        }
+                    }
+                } else if (!oldGrid || oldGrid.length === 0) {
+                    // If first run, randomize immediately (visuals appear instantly)
+                     randomizeGrid(true); // Pass true to set instant visual state
+                }
+                needsRedraw = true; // Flag for redraw
+            }
+
+            function countNeighbors(x, y) {
+                let count = 0;
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        const nx = (x + dx + GRID_WIDTH) % GRID_WIDTH;
+                        const ny = (y + dy + GRID_HEIGHT) % GRID_HEIGHT;
+                        // Count based on the logical 'state', not the visual 'animationValue'
+                        if (grid[ny]?.[nx]?.state === 1) {
+                             count++;
+                        }
+                    }
+                }
+                return count;
+            }
+
+             // --- Simulation Step (runs periodically) ---
+            function runSimulationStep() {
+                if (!grid || grid.length === 0) return;
+
+                let newPopulation = 0;
+                let changed = false;
+                const nextStates = []; // Store next logical states temporarily
+
+                 // 1. Calculate next logical state for all cells
+                 for (let y = 0; y < GRID_HEIGHT; y++) {
+                     nextStates[y] = [];
+                     for (let x = 0; x < GRID_WIDTH; x++) {
+                         const currentCell = grid[y][x];
+                         const neighbors = countNeighbors(x, y);
+                         let nextState = 0;
+
+                         if (currentCell.state === 1) { // Currently alive
+                             if (neighbors === 2 || neighbors === 3) nextState = 1;
+                         } else { // Currently dead
+                             if (neighbors === 3) nextState = 1;
+                         }
+                         nextStates[y][x] = nextState;
+
+                         if (nextState === 1) newPopulation++;
+                         if (nextState !== currentCell.state) changed = true;
+                     }
+                 }
+
+                 // 2. Update the grid's logical state (leaves animationValue untouched for tweening)
+                 for (let y = 0; y < GRID_HEIGHT; y++) {
+                     for (let x = 0; x < GRID_WIDTH; x++) {
+                         grid[y][x].state = nextStates[y][x];
+                     }
+                 }
+
+                if (changed) {
+                    generation++;
+                }
+                 population = newPopulation; // Update population count
+                 updateStats();
+                 needsRedraw = true; // Grid state changed, need to redraw eventually
+            }
+
+            // --- Animation & Drawing Loop (runs every frame) ---
+            function animationLoop(timestamp) {
+                if (!lastFrameTimestamp) lastFrameTimestamp = timestamp;
+                const deltaTime = timestamp - lastFrameTimestamp;
+                lastFrameTimestamp = timestamp;
+
+                let anythingAnimating = false;
+
+                // Calculate how much to tween this frame (avoid huge jumps on lag)
+                const tweenAmount = Math.min(1.0, deltaTime / ANIMATION_DURATION);
+
+                // Update animation values towards the logical state
+                if (grid && grid.length > 0) {
+                     for (let y = 0; y < GRID_HEIGHT; y++) {
+                         for (let x = 0; x < GRID_WIDTH; x++) {
+                            if (!grid[y]?.[x]) continue; // Skip if cell doesn't exist
+
+                             const cell = grid[y][x];
+                             const targetValue = cell.state; // Target is 0 (dead) or 1 (alive)
+
+                             if (Math.abs(cell.animationValue - targetValue) > 0.001) {
+                                 if (targetValue > cell.animationValue) {
+                                     cell.animationValue = Math.min(targetValue, cell.animationValue + tweenAmount);
+                                 } else {
+                                     cell.animationValue = Math.max(targetValue, cell.animationValue - tweenAmount);
+                                 }
+                                 anythingAnimating = true; // Something is still changing
+                             }
+                         }
+                     }
+                }
+
+                 // Only redraw if something is animating OR if explicitly flagged
+                 if (anythingAnimating || needsRedraw) {
+                     drawGrid();
+                     needsRedraw = false; // Reset flag after drawing
+                 }
+
+                animationFrameId = requestAnimationFrame(animationLoop); // Continue the loop
+            }
+
+
+            function drawGrid() {
+                if (!grid || grid.length === 0) return;
+
+                ctx.fillStyle = BG_COLOR_STYLE;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Draw grid lines (optional, can be taxing)
+                /*
+                ctx.strokeStyle = GRID_COLOR_STYLE;
+                ctx.lineWidth = 0.3; // Make lines thinner
+                ctx.beginPath();
+                for (let x = 0; x <= GRID_WIDTH; x++) { ctx.moveTo(x * CELL_SIZE, 0); ctx.lineTo(x * CELL_SIZE, canvas.height); }
+                for (let y = 0; y <= GRID_HEIGHT; y++) { ctx.moveTo(0, y * CELL_SIZE); ctx.lineTo(canvas.width, y * CELL_SIZE); }
+                ctx.stroke();
+                */
+
+                ctx.shadowColor = GLOW_COLOR;
+                const cellPadding = CELL_SIZE > 8 ? 1.5 : 0.5;
+
+                for (let y = 0; y < GRID_HEIGHT; y++) {
+                    for (let x = 0; x < GRID_WIDTH; x++) {
+                        if (!grid[y]?.[x]) continue;
+
+                        const cell = grid[y][x];
+
+                        if (cell.animationValue > 0.01) { // Only draw if somewhat visible
+                            const easedValue = easeOutCubic(cell.animationValue); // Apply easing
+
+                            const alpha = easedValue; // Fade effect
+                            const sizeFactor = easedValue; // Size grows/shrinks based on eased value
+                            const glowIntensity = 3 + easedValue * 6; // Glow pulses
+
+                            ctx.globalAlpha = alpha;
+                            ctx.shadowBlur = glowIntensity;
+                            ctx.fillStyle = CELL_COLOR;
+
+                            const baseDrawSize = CELL_SIZE - (cellPadding * 2);
+                            const currentSize = Math.max(0, baseDrawSize * sizeFactor); // Ensure size isn't negative
+                            const currentPadding = (CELL_SIZE - currentSize) / 2; // Center the cell
+
+                            const drawX = x * CELL_SIZE + currentPadding;
+                            const drawY = y * CELL_SIZE + currentPadding;
+                             // Adjust corner radius based on animated size
+                            const cornerRadius = Math.max(0.5, Math.min(3, currentSize / 5));
+
+                            if (currentSize > 0.5) { // Only draw if size is reasonably visible
+                                ctx.beginPath();
+                                ctx.moveTo(drawX + cornerRadius, drawY);
+                                ctx.lineTo(drawX + currentSize - cornerRadius, drawY);
+                                ctx.arcTo(drawX + currentSize, drawY, drawX + currentSize, drawY + cornerRadius, cornerRadius);
+                                ctx.lineTo(drawX + currentSize, drawY + currentSize - cornerRadius);
+                                ctx.arcTo(drawX + currentSize, drawY + currentSize, drawX + currentSize - cornerRadius, drawY + currentSize, cornerRadius);
+                                ctx.lineTo(drawX + cornerRadius, drawY + currentSize);
+                                ctx.arcTo(drawX, drawY + currentSize, drawX, drawY + currentSize - cornerRadius, cornerRadius);
+                                ctx.lineTo(drawX, drawY + cornerRadius);
+                                ctx.arcTo(drawX, drawY, drawX + cornerRadius, drawY, cornerRadius);
+                                ctx.closePath();
+                                ctx.fill();
+                            }
+                        }
+                    }
+                }
+                // Reset alpha and shadow
+                ctx.globalAlpha = 1.0;
+                ctx.shadowBlur = 0;
+            }
+
+            // --- Game Loop Management ---
+            function startGameLoops() {
+                if (isRunning) return; // Already running
+
+                console.log("Starting loops...");
+                isRunning = true;
+                playPauseBtn.textContent = 'Pause';
+
+                // Start Animation Loop (runs continuously)
+                if (!animationFrameId) {
+                     lastFrameTimestamp = performance.now(); // Reset timestamp for animation delta
+                     animationFrameId = requestAnimationFrame(animationLoop);
+                 }
+
+                // Start Simulation Loop (runs periodically)
+                 clearTimeout(simulationTimer); // Clear any previous timer
+                 function simulationTick() {
+                     runSimulationStep();
+                     if (isRunning) { // Check if still running before scheduling next
+                         simulationTimer = setTimeout(simulationTick, speed);
+                     }
+                 }
+                 simulationTick(); // Start the first tick immediately
+
+                 needsRedraw = true; // Ensure a draw happens
+            }
+
+            function stopGameLoops() {
+                if (!isRunning) return; // Already stopped
+
+                console.log("Stopping loops...");
+                isRunning = false;
+                playPauseBtn.textContent = 'Play';
+
+                // Stop Simulation Loop
+                clearTimeout(simulationTimer);
+                simulationTimer = null;
+
+                // Keep Animation Loop running for visual smoothness even when paused?
+                 // If you want animation to freeze on pause, uncomment below:
+                 /*
+                 if (animationFrameId) {
+                     cancelAnimationFrame(animationFrameId);
+                     animationFrameId = null;
+                 }
+                 */
+                 // For now, let animation continue to finish transitions when paused.
+                 // If animation loop *was* stopped, make sure it restarts on play.
+                 if (!animationFrameId) {
+                     lastFrameTimestamp = performance.now();
+                     animationFrameId = requestAnimationFrame(animationLoop);
+                 }
+                 needsRedraw = true; // Ensure a final draw if needed
+            }
+
+            // --- Control Functions ---
+            function togglePlayPause() {
+                if (isRunning) {
+                    stopGameLoops();
+                } else {
+                    startGameLoops();
+                }
+            }
+
+            function clearGrid() {
+                stopGameLoops();
+                grid = createEmptyGrid();
+                generation = 0;
+                population = 0;
+                updateStats();
+                needsRedraw = true; // Request redraw of empty grid
+                // Ensure animation loop is running if it was stopped
+                 if (!animationFrameId) {
+                     lastFrameTimestamp = performance.now();
+                     animationFrameId = requestAnimationFrame(animationLoop);
+                 }
+            }
+
+            // `instantVisuals` = true sets animationValue immediately for random/patterns
+            function randomizeGrid(instantVisuals = false) {
+                stopGameLoops();
+                if (!grid || grid.length === 0) resizeCanvas(); // Ensure grid exists
+
+                let newPopulation = 0;
+                for (let y = 0; y < GRID_HEIGHT; y++) {
+                    for (let x = 0; x < GRID_WIDTH; x++) {
+                        if (grid[y]?.[x]) {
+                            const isAlive = Math.random() > 0.75;
+                            grid[y][x].state = isAlive ? 1 : 0;
+                            // Set visual state instantly if requested
+                             grid[y][x].animationValue = instantVisuals ? grid[y][x].state : grid[y][x].animationValue;
+                             if(isAlive) newPopulation++;
+                        }
+                    }
+                }
+                generation = 0;
+                population = newPopulation;
+                updateStats();
+                needsRedraw = true;
+                startGameLoops(); // Restart simulation
+            }
+
+            function placePattern(pattern, centerX, centerY) {
+                stopGameLoops();
+                if (!grid || grid.length === 0) resizeCanvas();
+
+                const patternHeight = pattern.length;
+                const patternWidth = pattern[0].length;
+                const startY = centerY - Math.floor(patternHeight / 2);
+                const startX = centerX - Math.floor(patternWidth / 2);
+
+                // Clear area slightly larger than pattern first (optional but good for Pulsar)
+                 //______
+                //  const clearSize = Math.max(patternWidth, patternHeight) + 2;
+                //  const clearStartY = centerY - Math.floor(clearSize / 2);
+                //  const clearStartX = centerX - Math.floor(clearSize / 2);
+                //  for (let y = 0; y < clearSize; y++) {
+                //      for (let x = 0; x < clearSize; x++) {
+                //          const gridY = (clearStartY + y + GRID_HEIGHT) % GRID_HEIGHT;
+                //          const gridX = (clearStartX + x + GRID_WIDTH) % GRID_WIDTH;
+                //          if(grid[gridY]?.[gridX]) {
+                //              grid[gridY][gridX].state = 0; // Clear logical state
+                //              // Let animation handle the fade out
+                //          }
+                //      }
+                //  }
+                
+
+                // Place the pattern
+                for (let y = 0; y < patternHeight; y++) {
+                    for (let x = 0; x < patternWidth; x++) {
+                        const gridY = (startY + y + GRID_HEIGHT) % GRID_HEIGHT;
+                        const gridX = (startX + x + GRID_WIDTH) % GRID_WIDTH;
+                        if (grid[gridY]?.[gridX]) {
+                             grid[gridY][gridX].state = pattern[y][x];
+                             // Set visual instantly for patterns for better feedback
+                             grid[gridY][gridX].animationValue = pattern[y][x];
+                        }
+                    }
+                }
+
+                // Recalculate population after placing
+                 population = grid.flat().reduce((sum, cell) => sum + (cell ? cell.state : 0), 0);
+                 generation = 0; // Reset generation for patterns
+                updateStats();
+                needsRedraw = true;
+                startGameLoops();
+            }
+
+            // Glider/Pulsar definitions remain the same, call placePattern
+             function createGlider() {
+                const pattern = [ [0, 1, 0], [0, 0, 1], [1, 1, 1] ];
+                placePattern(pattern, Math.floor(GRID_WIDTH / 2), Math.floor(GRID_HEIGHT / 2));
+            }
+            function createPulsar() {
+                 const pattern = [ /* ... pulsar pattern ... */
+                     [0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0],[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],[1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1],[1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1],[1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1],[0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0],[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],[0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0],[1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1],[1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1],[1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1],[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],[0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 0]
+                 ];
+                placePattern(pattern, Math.floor(GRID_WIDTH / 2), Math.floor(GRID_HEIGHT / 2));
+            }
+
+
+            function updateStats() {
+                genCountEl.textContent = generation;
+                popCountEl.textContent = population;
+            }
+
+            function toggleUI() {
+                 uiVisible = !uiVisible;
+                 // Apply 'hidden' class based on uiVisible
+                 uiContainer.classList.toggle('hidden', !uiVisible);
+                 statsPanel.classList.toggle('hidden', !uiVisible);
+                 hideUIBtn.textContent = uiVisible ? 'Hide UI' : 'Show UI';
+            }
+
+
+            // --- Event Listeners ---
+            window.addEventListener('resize', () => {
+                 stopGameLoops(); // Pause while resizing
+                 resizeCanvas();
+                 startGameLoops(); // Restart after resize
+            });
+
+            hideUIBtn.addEventListener('click', toggleUI);
+            playPauseBtn.addEventListener('click', togglePlayPause);
+            clearBtn.addEventListener('click', clearGrid);
+            randomBtn.addEventListener('click', () => randomizeGrid(false)); // Let fade in
+            gliderBtn.addEventListener('click', createGlider);
+            pulsarBtn.addEventListener('click', createPulsar);
+
+            speedSlider.addEventListener('input', () => {
+                const sliderValue = parseInt(speedSlider.value, 10);
+                speed = 330 - (sliderValue * 30); // Update speed interval
+                 // If running, restart the simulation timer with the new speed
+                 if (isRunning) {
+                     clearTimeout(simulationTimer);
+                     function simulationTick() {
+                         runSimulationStep();
+                         if (isRunning) {
+                             simulationTimer = setTimeout(simulationTick, speed);
+                         }
+                     }
+                     simulationTimer = setTimeout(simulationTick, speed);
+                 }
+            });
+
+             // Mouse drawing handlers - Modify cell state *and* animationValue instantly
+            function handleCellToggle(eventX, eventY, mode) {
+                 const rect = canvas.getBoundingClientRect();
+                 const x = Math.floor((eventX - rect.left) / CELL_SIZE);
+                 const y = Math.floor((eventY - rect.top) / CELL_SIZE);
+
+                 if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT && grid[y]?.[x]) {
+                     const cell = grid[y][x];
+                     const newState = mode; // 0 for erase, 1 for draw
+
+                     if (cell.state !== newState) {
+                          cell.state = newState;
+                          cell.animationValue = newState; // Set visual state instantly
+                          // Recalculate population immediately on manual change
+                          population += (newState === 1 ? 1 : -1);
+                          updateStats();
+                          needsRedraw = true; // Need to redraw this change
+                     }
+                     return true; // Handled
+                 }
+                 return false; // Not handled (outside grid)
+             }
+
+            canvas.addEventListener('mousedown', (event) => {
+                if (event.button !== 0) return;
+                 const rect = canvas.getBoundingClientRect();
+                 const x = Math.floor((event.clientX - rect.left) / CELL_SIZE);
+                 const y = Math.floor((event.clientY - rect.top) / CELL_SIZE);
+
+                 if (x >= 0 && x < GRID_WIDTH && y >= 0 && y < GRID_HEIGHT && grid[y]?.[x]) {
+                     isDrawing = true;
+                     // Determine mode based on initial click
+                     drawMode = grid[y][x].state === 1 ? 0 : 1;
+                     handleCellToggle(event.clientX, event.clientY, drawMode); // Toggle the first cell
+                 }
+            });
+
+            canvas.addEventListener('mousemove', (event) => {
+                if (!isDrawing || drawMode === null) return;
+                handleCellToggle(event.clientX, event.clientY, drawMode); // Apply current draw/erase mode
+            });
+
+             canvas.addEventListener('mouseleave', () => { isDrawing = false; drawMode = null; });
+             window.addEventListener('mouseup', (event) => {
+                 if (event.button === 0) { isDrawing = false; drawMode = null; }
+             });
+            canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+            // Keyboard shortcuts (remain largely the same)
+            document.addEventListener('keydown', (event) => {
+                 if (event.target.tagName === 'INPUT' || event.target.isContentEditable) return;
+                 let handled = false;
+                 switch(event.key.toLowerCase()) {
+                     case ' ': togglePlayPause(); handled = true; break;
+                     case 'r': randomizeGrid(false); handled = true; break; // Use false for fade-in
+                     case 'c': clearGrid(); handled = true; break;
+                     case 'g': createGlider(); handled = true; break;
+                     case 'p': createPulsar(); handled = true; break;
+                     case 'h': toggleUI(); handled = true; break;
+                     case 'arrowup':
+                         speedSlider.value = Math.min(parseInt(speedSlider.value) + 1, 10);
+                         speedSlider.dispatchEvent(new Event('input'));
+                         handled = true; break;
+                     case 'arrowdown':
+                         speedSlider.value = Math.max(parseInt(speedSlider.value) - 1, 1);
+                         speedSlider.dispatchEvent(new Event('input'));
+                         handled = true; break;
+                 }
+                 if (handled) event.preventDefault();
+            });
+
+            // --- Initialization ---
+            console.log('Initializing Smooth Conway\'s Game of Life...');
+            resizeCanvas(); // Sets up canvas, grid, dimensions, potentially randomizes
+            updateStats();
+            startGameLoops(); // Start both simulation and animation loops
+            console.log('Initialization complete.');
+        });
+    </script>
+</body>
+</html>
